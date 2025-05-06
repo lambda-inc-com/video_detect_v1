@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  go-client:
+    image: build-go-client:latest
+    container_name: ai-go-client
+    ports:
+      - "7050:8080" # HTTP 控制端口
+      - "7051:8081" # gRPC 控制端口
+    volumes:
+      - ./configs:/app/configs:ro
+      - /data/irrigated/server/dist/upload:/app/recordings
+    networks:
+      - video_net
+    depends_on:
+      - ai-service
+      - rtmp-server
+
+  ai-service:
+    image: build-ai-service:latest
+    container_name: ai-service
+    ports:
+      - "5000:5000" # 用于测试用 curl，如果仅容器内调用可去掉
+    networks:
+      - video_net
+
+  rtmp-server:
+    image: build-rtmp-server:latest
+    container_name: rtmp-server
+    ports:
+      - "7059:1935" # 推流端口
+      - "7052:80" # hls端口
+    networks:
+      - video_net
+    volumes:
+      - ./hls:/tmp/hls
+
+networks:
+  video_net:
+    driver: bridge

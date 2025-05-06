@@ -1,0 +1,47 @@
+[server]
+listen-http-addr = "0.0.0.0:8080"
+grpc-peer-addr = "0.0.0.0:8081"
+
+use-h2c = true
+
+[engine]
+uvicorn-socket = false  # 保持TCP通信，Linux服务器部署更通用
+socket-path = "/app/uvicorn.sock"
+
+# ✅ 改成容器名访问
+detect-ai-url = "http://ai-service:5000/detect"
+
+healthy-heartbeat = 60
+close-chan-cap = 128
+
+# 容器内部推流，走容器名
+push-url-internal-pre = "rtmp://rtmp-server/live"
+
+# 外部访问推流，走公网IP或者域名
+push-url-public-pre = "rtmp://183.215.46.57:7059/live"
+
+push-url-public-hls-pre = "http://183.215.46.57:7052/live"
+
+# 容器内录制文件路径
+record-path = "/app/recordings"
+
+[logger]
+log-path = "./logs/detectLog"
+log-level = "debug"
+split-max-size = 128
+max-age = 30
+max-backups = 100
+local-time = true
+compress = false
+
+
+[redis]
+host = "127.0.0.1:7980"
+password = ""
+max-idle-conns = 10
+min-idle-conns = 5
+
+
+[store]
+detect-result-channel-key = "detect:result:channel"
+record-video-channel-key = "record:video:channel"
