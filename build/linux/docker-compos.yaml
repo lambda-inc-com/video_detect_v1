@@ -9,7 +9,8 @@ services:
       - "7051:8081" # gRPC 控制端口
     volumes:
       - ./configs:/app/configs:ro
-      - /data/irrigated/server/dist/upload:/app/recordings
+      - /data/irrigated/server/dist/upload/recording:/app/recordings
+      - /data/irrigated/server/dist/upload/detects:/app/detects
     networks:
       - video_net
     depends_on:

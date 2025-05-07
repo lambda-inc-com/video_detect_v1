@@ -19,6 +19,14 @@ type StoreV1 struct {
 	recordVideoChannelKey  string
 }
 
+func NewStoreV1WithClient(cfg *config.Config, redisClient *redis.Client) (*StoreV1, error) {
+	return &StoreV1{
+		redisClient:            redisClient,
+		detectResultChannelKey: cfg.Store.DetectResultChannelKey,
+		recordVideoChannelKey:  cfg.Store.RecordVideoChannelKey,
+	}, nil
+}
+
 func NewStoreV1(cfg *config.Config) (*StoreV1, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:            cfg.Redis.Host,

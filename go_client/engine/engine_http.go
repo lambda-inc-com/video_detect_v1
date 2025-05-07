@@ -215,6 +215,7 @@ func (d DetectHTTPServiceV1) StartDetect(c *gin.Context) error {
 			req.RtspURL,
 			d.cfg.Engine.DetectAIURL,
 			SetSessionVideoStreamConfig(req.Width, req.Height, req.Framerate),
+			SetPullerEOFAutoRestart(req.RetryTimes, req.EOFAutoRestart),
 		)
 		if err != nil {
 			return status.Wrapper(http.StatusInternalServerError, err)
@@ -268,6 +269,7 @@ func (d DetectHTTPServiceV1) StartRecord(c *gin.Context) error {
 			req.RtspURL,
 			d.cfg.Engine.DetectAIURL,
 			SetSessionVideoStreamConfig(req.Width, req.Height, req.Framerate),
+			SetPullerEOFAutoRestart(req.RetryTimes, req.EOFAutoRestart),
 		)
 		if err != nil {
 			return status.Wrapper(http.StatusInternalServerError, err)

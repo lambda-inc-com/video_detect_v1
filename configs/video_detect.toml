@@ -14,8 +14,9 @@ healthy-heartbeat = 60
 close-chan-cap = 128
 push-url-internal-pre = "rtmp://rtmp-server/live"
 push-url-public-pre = "rtmp://localhost:1935/live"
-push-url-public-hls-pre = "http://localhost:1935/live"
-record-path = "/app/recordings"
+push-url-public-hls-pre = "http://localhost:1935"
+pull-restart-mode = "hk"
+
 
 [logger]
 log-path = "./logs/detectLog"
@@ -29,8 +30,8 @@ compress = false
 
 
 [redis]
-host = "127.0.0.1:7980"
-password = ""
+host = "ai.lamdar.cn:19802"
+password = "QpdUm3KNMXwya8Mjiuxiang"
 max-idle-conns = 10
 min-idle-conns = 5
 
@@ -38,3 +39,13 @@ min-idle-conns = 5
 [store]
 detect-result-channel-key = "detect:result:channel"
 record-video-channel-key = "record:video:channel"
+record-path = "/app/recordings"
+record-path-real = "/api/v1/lib/core/downloadFile?file=/recordings"
+
+detect-result-path = "/app/detects"
+detect-result-path-real = "/api/v1/lib/core/downloadFile?file=/detects"
+
+[hk-video]
+base-url = "https://183.215.46.57:1443/artemis"
+app-key = "25373899"
+app-secret = "E9TFZHKRNwsNOPbVFL6W"

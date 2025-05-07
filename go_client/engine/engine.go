@@ -56,6 +56,12 @@ func NewDetectEngine(args []string) (engine *DetectionEngine, err error) {
 		Compress:   _config.Logger.Compress,
 	}, _config.Logger.LogLevel)
 
+	eofRestartV1 := NewPullEOFRestart(_config)
+
+	storeV1, err := NewStoreV1(_config)
+	if err != nil {
+		return nil, err
+	}
 	// new session manager
 	_ctx, _cancel := context.WithCancel(ctx)
 	_manager := NewSessionManager(
@@ -63,10 +69,8 @@ func NewDetectEngine(args []string) (engine *DetectionEngine, err error) {
 		_cancel,
 		_logger,
 		_config,
-		_config.Engine.HealthyHeartbeat,
-		_config.Engine.PushUrlInternalPre,
-		_config.Engine.PushUrlPublicPre,
-		_config.Engine.PushUrlPublicHlsPre,
+		storeV1,
+		eofRestartV1,
 	)
 
 	// ---- init gin engine ----
@@ -106,6 +110,16 @@ func NewDetectEngine(args []string) (engine *DetectionEngine, err error) {
 	}
 
 	return engine, http2.ConfigureServer(engine.srv, nil)
+}
+
+func NewPullEOFRestart(cfg *config.Config) PullStreamEOFRestart {
+	switch cfg.Engine.PullRestartMode {
+	case "wvp":
+		//	todo
+		fallthrough
+	default: // hk
+		return GetHkRtspUrl(cfg)
+	}
 }
 
 func (e *DetectionEngine) Run(endCh chan os.Signal) {

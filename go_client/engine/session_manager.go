@@ -30,13 +30,15 @@ type SessionManager struct {
 	sessions            *map_utils.Map[string, *Session]
 	closeCh             chan string
 	healthyHeartbeat    int32
+	detectStore         DetectStore
+	pullerRestart       PullStreamEOFRestart
 }
 
-func NewSessionManager(ctx context.Context, canalFunc context.CancelFunc, logger *zap.Logger, cfg *config.Config, healthyHeartbeat int32, pushUrlInternalPre, pushUrlPublicPre, hlsPre string) *SessionManager {
+func NewSessionManager(ctx context.Context, canalFunc context.CancelFunc, logger *zap.Logger, cfg *config.Config, store DetectStore, pullerRestart PullStreamEOFRestart) *SessionManager {
 	return &SessionManager{
-		pushUrlInternalPre:  pushUrlInternalPre,
-		pushUrlPublicPre:    pushUrlPublicPre,
-		pushUrlPublicHlsPre: hlsPre,
+		pushUrlInternalPre:  cfg.Engine.PushUrlInternalPre,
+		pushUrlPublicPre:    cfg.Engine.PushUrlPublicPre,
+		pushUrlPublicHlsPre: cfg.Engine.PushUrlPublicHlsPre,
 		ctx:                 ctx,
 		cancel:              canalFunc,
 		logger:              logger,
@@ -50,7 +52,9 @@ func NewSessionManager(ctx context.Context, canalFunc context.CancelFunc, logger
 		closeCh:  make(chan string, 128),
 		//rwLock:   new(sync.RWMutex),
 		cfg:              cfg,
-		healthyHeartbeat: healthyHeartbeat,
+		healthyHeartbeat: cfg.Engine.HealthyHeartbeat,
+		detectStore:      store,
+		pullerRestart:    pullerRestart,
 	}
 }
 
@@ -142,6 +146,10 @@ func (s *SessionManager) CreateSession(id, rtsp, aiURL string, options ...SetSes
 
 	session.streamKey = uuid.New().String()
 
+	session.pushMu = sync.Mutex{}
+	session.pullMu = sync.Mutex{}
+	session.recordMu = sync.Mutex{}
+
 	session.SetSessionWithOptions(options...)
 	session.resultCache = &DetectionResultCache{
 		RWMutex: sync.RWMutex{},
@@ -151,13 +159,12 @@ func (s *SessionManager) CreateSession(id, rtsp, aiURL string, options ...SetSes
 
 	s.sessions.Store(id, session)
 
-	pushURL := GenPushURL(s.pushUrlInternalPre, session.streamKey)
-	if err := session.PrepareStream(pushURL); err != nil {
+	if err := session.PreparePuller(); err != nil { // 创建拉流资源
 		s.sessions.Delete(id)
 		return nil, fmt.Errorf("failed to prepare stream: %w", err)
 	}
 
-	s.logger.Info("🚀 Session started", zap.String("id", id), zap.String("rtsp", rtsp), zap.String("pushRTMPURL", pushURL))
+	s.logger.Info("🚀 Session started", zap.String("id", id), zap.String("rtsp", rtsp))
 
 	go func() {
 		defer func() {
@@ -165,7 +172,15 @@ func (s *SessionManager) CreateSession(id, rtsp, aiURL string, options ...SetSes
 				s.logger.Error("panic recovered in Session.Run", zap.Any("error", r), zap.ByteString("stack", debug.Stack()))
 			}
 		}()
-		session.Run(aiURL, s.cfg.Engine.UvicornSocket, s.cfg.Engine.SocketPath)
+		session.Run(
+			aiURL,
+			s.cfg.Engine.UvicornSocket,
+			s.cfg.Engine.SocketPath,
+			s.cfg.Store.DetectResultPath+"/"+session.id,
+			s.cfg.Store.DetectResultPathReal+"/"+session.id,
+			s.detectStore,
+			s.pullerRestart,
+		)
 	}()
 
 	return session, nil
@@ -206,6 +221,12 @@ func (s *SessionManager) StopSessionDetect(id string) error {
 
 func (s *SessionManager) StartSessionDetect(id string, detectEndTimestamp int64) error {
 	if session, exists := s.sessions.Load(id); exists {
+		pushURL := GenPushURL(s.pushUrlInternalPre, session.streamKey)
+		err := session.PreParePusher(pushURL) // 准备推流资源
+		if err != nil {
+			return err
+		}
+		s.logger.Info("pusher starting:", zap.String("id", id), zap.String("pushRTMPURL", pushURL))
 		session.detectStatus.Store(true)
 		session.detectEndTimestamp.Store(detectEndTimestamp)
 		return nil
@@ -224,13 +245,15 @@ func (s *SessionManager) StopSessionRecord(id string) error {
 
 func (s *SessionManager) StartSessionRecord(id string, recordEndTimestamp int64, segment time.Duration) error {
 	if session, exists := s.sessions.Load(id); exists {
-		recording := session.recordStatus.CompareAndSwap(false, true)
-		if recording {
+		success := session.recordStatus.CompareAndSwap(false, true)
+		if !success {
 			// 已运行中，直接重置结束时间，返回
 			session.recordEndTimestamp.Store(recordEndTimestamp)
 			return nil
 		}
-		err := session.StartRecording(s.cfg.Engine.RecordPath+"/"+session.id, segment)
+
+		recordPath, realPath := s.cfg.Store.RecordPath+"/"+session.id, s.cfg.Store.RecordPathReal+"/"+session.id
+		err := session.StartRecording(recordPath, realPath, segment, s.detectStore)
 		if err != nil {
 			return err
 		}

@@ -13,6 +13,8 @@ type Config struct {
 	Logger Logger `toml:"logger"`
 	Redis  Redis  `toml:"redis"`
 	Store  Store  `toml:"store"`
+
+	HKVideo HKVideo `toml:"hk-video"`
 }
 
 type env struct {
@@ -36,12 +38,18 @@ type Engine struct {
 	PushUrlPublicPre    string `toml:"push-url-public-pre"`     // 播放展示用：如 rtmp://mydomain.com/live/stream
 	PushUrlPublicHlsPre string `toml:"push-url-public-hls-pre"` // 播放Hls展示用：如 http://mydomain.com/live/stream
 
-	RecordPath string `toml:"record-path"` // 录制文件路径
+	PullRestartMode string `toml:"pull-restart-mode"` // 拉流重启方式 hk,wvp
 }
 
 type Store struct {
 	DetectResultChannelKey string `toml:"detect-result-channel-key"` // 识别结果推送Key
 	RecordVideoChannelKey  string `toml:"record-video-channel-key"`  // 视频录制推送Key
+
+	RecordPath     string `toml:"record-path"`      // 录制文件路径
+	RecordPathReal string `toml:"record-path-real"` // 录制文件路径(系统真实路径)
+
+	DetectResultPath     string `toml:"detect-result-path"`      // 识别结果路径(容器内路径)
+	DetectResultPathReal string `toml:"detect-result-path-real"` // 识别结果路径(系统真实路径)
 }
 
 type Redis struct {
@@ -84,4 +92,10 @@ func BindConfig(args []string) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+type HKVideo struct {
+	BaseURL   string `toml:"base-url"`
+	AppKey    string `toml:"app-key"`
+	AppSecret string `toml:"app-secret"`
 }

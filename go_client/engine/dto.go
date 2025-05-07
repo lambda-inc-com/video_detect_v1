@@ -112,11 +112,12 @@ type SessionAction struct {
 
 // 创建会话Req
 type CreateSessionReq struct {
-	RtspURL    string `json:"rtspURL"  validate:"required"` // 摄像头播放地址URL
-	Width      int    `json:"width" validate:"gte=0"`       //  宽
-	Height     int    `json:"height" validate:"gte=0"`      //  高
-	RetryTimes int    `json:"retryTimes" validate:"gt=0"`   // 读帧失败重试次数
-	Framerate  int    `json:"framerate" validate:"gte=0"`   // 帧率
+	RtspURL        string `json:"rtspURL"  validate:"required"` // 摄像头播放地址URL
+	Width          int    `json:"width" validate:"gte=0"`       //  宽
+	Height         int    `json:"height" validate:"gte=0"`      //  高
+	Framerate      int    `json:"framerate" validate:"gte=0"`   // 帧率
+	RetryTimes     int    `json:"retryTimes" validate:"gt=0"`   // 读帧失败重试次数
+	EOFAutoRestart bool   `json:"eofAutoRestart"`               // 取流EOF是否自动重启
 }
 
 // 开始识别Req
