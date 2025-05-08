@@ -2,7 +2,6 @@ package engine
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os/exec"
 )
@@ -11,7 +10,7 @@ import (
 func (s *Session) ClearPuller() {
 	s.pullMu.Lock()
 	defer s.pullMu.Unlock()
-	if s.pullFFmpegCmd != nil {
+	if s.pullFFmpegCmd != nil && s.pullFFmpegCmd.Process != nil {
 		_ = s.pullFFmpegCmd.Process.Kill()
 		_ = s.pullFFmpegCmd.Wait()
 	}
@@ -23,12 +22,12 @@ func (s *Session) ClearPuller() {
 func (s *Session) ClearPusher() {
 	s.pushMu.Lock()
 	defer s.pushMu.Unlock()
-	if s.pushStdin != nil {
-		_ = s.pushStdin.Close()
-	}
-	if s.pushFFmpegCmd != nil {
+	if s.pushFFmpegCmd != nil && s.pushFFmpegCmd.Process != nil {
 		_ = s.pushFFmpegCmd.Process.Kill()
 		_ = s.pushFFmpegCmd.Wait()
+	}
+	if s.pushStdin != nil {
+		_ = s.pushStdin.Close()
 	}
 
 	s.pushStdin = nil
@@ -40,20 +39,21 @@ func (s *Session) ClearPusher() {
 func (s *Session) ClearRecorder() {
 	s.recordMu.Lock()
 	defer s.recordMu.Unlock()
-	if s.recordStdin != nil {
-		_ = s.recordStdin.Close()
-	}
 	if s.recordFFmpegCmd != nil && s.recordFFmpegCmd.Process != nil {
 		_ = s.recordFFmpegCmd.Process.Kill()
 		_ = s.recordFFmpegCmd.Wait()
 	}
-
+	if s.recordStdin != nil {
+		_ = s.recordStdin.Close()
+	}
 	s.recordStdin = nil
 	s.recordFFmpegCmd = nil
 }
 
 var (
-	PullReaderIsNil = errors.New("PullReader is nil")
+	PullReaderIsNil   = errors.New("pull reader is nil")
+	PushWriterIsNil   = errors.New("push writer is nil")
+	RecordWriterIsNil = errors.New("record writer is nil")
 )
 
 func (s *Session) PullerRead(buf []byte) error {
@@ -69,25 +69,25 @@ func (s *Session) PullerRead(buf []byte) error {
 	return err
 }
 
-func (s *Session) RecorderWrite(buf []byte) error {
-	s.recordMu.Lock()
-	recordWriter := s.recordStdin
-	s.recordMu.Unlock()
-	if recordWriter == nil {
-		return fmt.Errorf("recordWriter is nil")
-	}
-	_, err := recordWriter.Write(buf)
-	return err
-}
-
 func (s *Session) PusherWrite(buf []byte) error {
 	s.pushMu.Lock()
 	pushWriter := s.pushStdin
 	s.pushMu.Unlock()
 	if pushWriter == nil {
-		return fmt.Errorf("pushWriter is nil")
+		return PushWriterIsNil
 	}
 	_, err := pushWriter.Write(buf)
+	return err
+}
+
+func (s *Session) RecorderWrite(buf []byte) error {
+	s.recordMu.Lock()
+	recordWriter := s.recordStdin
+	s.recordMu.Unlock()
+	if recordWriter == nil {
+		return RecordWriterIsNil
+	}
+	_, err := recordWriter.Write(buf)
 	return err
 }
 

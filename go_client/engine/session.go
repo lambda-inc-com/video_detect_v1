@@ -82,6 +82,8 @@ type Session struct {
 	detectEndTimestamp atomic.Int64 // 识别结束时间戳
 	recordEndTimestamp atomic.Int64 // 录制结束时间戳
 
+	lastResetAt atomic.Int64
+
 	detectStatus       atomic.Bool // 识别状态 false 停止 true 识别中
 	recordStatus       atomic.Bool // 录制状态 false 停止 true 录制中
 	runningStatus      atomic.Bool // 运行状态 false 关闭 true 运行中
@@ -115,6 +117,9 @@ type Session struct {
 	img    *gocv.Mat // 保持为指针类型
 
 	ffmpegBuffer []byte
+
+	rtspUpdateChRun       chan string
+	rtspUpdateChRecording chan string
 }
 
 type SetSessionOption func(s *Session)
@@ -154,18 +159,20 @@ func SetPullerEOFAutoRestart(retryTimes int, autoRestart bool) SetSessionOption 
 
 func NewSessionWithCtx(id, rtsp string, ctx context.Context, cancelFunc context.CancelFunc, logger *zap.Logger, closeCh chan<- string, options ...SetSessionOption) *Session {
 	s := &Session{
-		detectStatus:  atomic.Bool{},
-		runningStatus: atomic.Bool{},
-		ctx:           ctx,
-		cancelFunc:    cancelFunc,
-		id:            id,
-		closeCh:       closeCh,
-		rtspURL:       rtsp,
-		logger:        logger,
-		localCache:    cache.New(1*time.Minute, 2*time.Minute),
-		imgBuf:        imgBufPool.Get().([]byte),
-		img:           matPool.Get().(*gocv.Mat), // 从对象池获取指针
-		ffmpegBuffer:  make([]byte, defaultFFmpegBufferSize),
+		detectStatus:          atomic.Bool{},
+		runningStatus:         atomic.Bool{},
+		ctx:                   ctx,
+		cancelFunc:            cancelFunc,
+		id:                    id,
+		closeCh:               closeCh,
+		rtspURL:               rtsp,
+		logger:                logger,
+		localCache:            cache.New(1*time.Minute, 2*time.Minute),
+		imgBuf:                imgBufPool.Get().([]byte),
+		img:                   matPool.Get().(*gocv.Mat), // 从对象池获取指针
+		ffmpegBuffer:          make([]byte, defaultFFmpegBufferSize),
+		rtspUpdateChRun:       make(chan string, 1),
+		rtspUpdateChRecording: make(chan string, 1),
 	}
 
 	// set option
@@ -185,6 +192,10 @@ func (s *Session) SetSessionWithOptions(options ...SetSessionOption) {
 			options[i](s)
 		}
 	}
+}
+
+func (s *Session) GetCancelFunc() context.CancelFunc {
+	return s.cancelFunc
 }
 
 func (s *Session) Reset() {
@@ -334,7 +345,7 @@ func (s *Session) PreParePusher(pushRTMPURL string) (err error) {
 	}
 	s.SetPusher(pushCmd, pushIO)
 
-	s.logger.Info("拉流与推流 FFmpeg 初始化完成")
+	s.logger.Info("推流 FFmpeg 初始化完成")
 	return nil
 }
 
@@ -407,11 +418,18 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 		case <-s.ctx.Done():
 			s.logger.Info("🛑 Context canceled")
 			return
+		case newRtsp := <-s.rtspUpdateChRun:
+			s.logger.Info("🔁 Run 收到拉流地址更新", zap.String("newRtsp", newRtsp))
+			if err := s.PreparePuller(); err != nil {
+				continue
+			}
+			continue
 		default:
 			if !s.runningStatus.Load() {
 				return
 			}
 
+			// 从拉流中读取数据
 			err := s.PullerRead(s.imgBuf)
 			if err != nil {
 				if err == io.EOF || errors.Is(err, PullReaderIsNil) {
@@ -430,16 +448,13 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 						s.cancelFunc()
 						return
 					}
-					s.logger.Info("🔁 成功获取新拉流地址", zap.String("url", rtspURL))
-					s.ClearPuller()
-					s.rtspURL = rtspURL
-					err = s.PreparePuller()
+					s.logger.Info("🔁 成功获取新拉流地址", zap.String("id", s.id), zap.String("url", rtspURL))
+					err = s.ResetRtspURL(rtspURL)
 					if err != nil {
-						s.logger.Error("❌ 重新拉流启动失败", zap.String("id", s.id), zap.Error(err))
 						s.cancelFunc()
+						s.logger.Info("❌ 🔁 ResetRtspURL 错误", zap.String("id", s.id), zap.String("url", rtspURL))
 						return
 					}
-
 					continue
 				}
 
@@ -453,7 +468,13 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 				// 跳过部分帧，减少处理负担
 				continue
 			}
+			if !s.detectStatus.Load() || time.Now().Unix() >= s.detectEndTimestamp.Load() {
+				s.detectStatus.CompareAndSwap(true, false)
+				s.ClearPusher() // 停止推流进程
+				continue        // 无需目标检测或推流，继续下一帧
+			}
 
+			// 将帧数据转换为 gocv.Mat
 			imgTmp, err := gocv.NewMatFromBytes(s.height, s.width, gocv.MatTypeCV8UC3, s.imgBuf)
 			if err == nil && !imgTmp.Empty() {
 				if s.img != nil {
@@ -465,14 +486,8 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 			} else {
 				continue
 			}
-			// 写入录制
-			if s.recordStatus.Load() && s.recordStdin != nil {
-				err = s.RecorderWrite(s.imgBuf)
-				if err != nil {
-					s.logger.Error("写入录制失败", zap.Error(err))
-				}
-			}
 
+			// 获取最新的检测结果
 			var latestResults []DetectionResult
 			func() {
 				s.resultCache.RLock()
@@ -649,10 +664,9 @@ func (s *Session) asyncDetectLoop(uvicornSocket bool, socketPath string, aiDetec
 	}
 }
 
-func (s *Session) StartRecording(recordDir, realDir string, segment time.Duration, detectStore DetectStore) error {
+func (s *Session) StartRecording(recordDir, realDir string, segment time.Duration, detectStore DetectStore, pullRestart PullStreamEOFRestart) error {
 	s.logger.Info("▶️ 开始录制（RTSP直录）", zap.String("dir", recordDir), zap.Duration("segment", segment))
 
-	// 确保目录存在
 	if err := os.MkdirAll(recordDir, 0755); err != nil {
 		s.logger.Error("创建录制目录失败", zap.Error(err))
 		return err
@@ -666,72 +680,97 @@ func (s *Session) StartRecording(recordDir, realDir string, segment time.Duratio
 			s.recordEndTimestamp.Store(0)
 			s.ClearRecorder()
 		}()
+		eofTimes := 0
 
 		for {
-			now := time.Now()
-			if !s.recordStatus.Load() || now.Unix() >= s.recordEndTimestamp.Load() {
-				s.logger.Info("⏹️ 录制任务结束")
+			select {
+			case <-s.ctx.Done():
+				s.logger.Info("⏹️ 录制任务被取消", zap.String("dir", recordDir))
 				return
-			}
 
-			// 生成本段文件名
-			//formatTime := now.Local().Format("2006-01-02_15:04:05")
-			formatTime := uuid.New().String()
-			segmentPath := filepath.Join(recordDir, formatTime+".mp4")
-			segmentPathReal := filepath.Join(realDir, formatTime+".mp4")
-			s.logger.Info("📽️ 开始录制分段（RTSP直录）", zap.String("file", segmentPath))
+			case newRtsp := <-s.rtspUpdateChRecording:
+				s.logger.Info("🔁 收到拉流地址更新（录制）", zap.String("newRtsp", newRtsp))
+				s.ClearRecorder()
+				// 不 return，继续循环，下一段会使用新地址
 
-			// 每段使用 ffmpeg 录制 segment 秒的视频
-			cmd := exec.CommandContext(s.ctx, "ffmpeg",
-				"-loglevel", "quiet", // ✅ 关闭所有日志输出
-				"-rtsp_transport", "tcp",
-				"-timeout", "5000000",
-				"-analyzeduration", "5000000",
-				"-probesize", "10000000",
-				"-i", s.rtspURL,
-				"-c:v", "libx264",
-				"-preset", "ultrafast",
-				"-tune", "zerolatency",
-				"-pix_fmt", "yuv420p",
-				"-movflags", "+faststart",
-				"-f", "mp4",
-				"-an",
-				"-t", fmt.Sprintf("%.0f", segment.Seconds()),
-				"-y",
-				segmentPath,
-			)
-			cmd.Stderr = os.Stderr
-
-			segmentStart := now.Unix()
-
-			if err := cmd.Run(); err != nil {
-				s.logger.Error("FFmpeg录制执行失败", zap.Error(err))
-				return
-			}
-
-			s.ClearRecorder()
-
-			segmentStop := time.Now().Unix()
-			s.logger.Info("✅ 分段录制完成", zap.String("file", segmentPath))
-
-			// 异步推送结果
-			go func(data StoreRecordVideoDto) {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				if err := detectStore.StoreRecordVideo(ctx, data); err != nil {
-					s.logger.Error("🔴 推送视频记录失败", zap.Error(err))
-				} else {
-					s.logger.Info("✅ 已推送视频记录", zap.Any("video", data))
+			default:
+				now := time.Now()
+				if !s.recordStatus.Load() || now.Unix() >= s.recordEndTimestamp.Load() {
+					s.logger.Info("⏹️ 录制任务结束")
+					return
 				}
-			}(StoreRecordVideoDto{
-				PathURL:        segmentPathReal,
-				StartTimestamp: segmentStart,
-				EndTimestamp:   segmentStop,
-				ID:             s.id,
-			})
 
-			// 睡眠直到下一个段的起始（避免极快循环，也可省略）
-			time.Sleep(500 * time.Millisecond)
+				formatTime := uuid.New().String()
+				segmentPath := filepath.Join(recordDir, formatTime+".mp4")
+				segmentPathReal := filepath.Join(realDir, formatTime+".mp4")
+				s.logger.Info("📽️ 开始录制分段", zap.String("file", segmentPath))
+
+				cmd := exec.CommandContext(s.ctx, "ffmpeg",
+					"-loglevel", "quiet",
+					"-rtsp_transport", "tcp",
+					"-timeout", "5000000",
+					"-analyzeduration", "5000000",
+					"-probesize", "10000000",
+					"-i", s.rtspURL,
+					"-c:v", "libx264",
+					"-preset", "ultrafast",
+					"-tune", "zerolatency",
+					"-pix_fmt", "yuv420p",
+					"-movflags", "+faststart",
+					"-f", "mp4",
+					"-an",
+					"-t", fmt.Sprintf("%.0f", segment.Seconds()),
+					"-y", segmentPath,
+				)
+				cmd.Stderr = os.Stderr
+
+				start := time.Now().Unix()
+				err := cmd.Run()
+				end := time.Now().Unix()
+
+				if err != nil {
+					s.logger.Error("❌ FFmpeg 录制失败", zap.Error(err))
+
+					// 尝试重拉 RTSP 地址（只要在运行状态）
+					if s.runningStatus.Load() {
+						eofTimes++
+						if !s.pullEOFAutoRestart.Load() || eofTimes > s.retryTimes { // 无需重新拉流
+							s.logger.Error("❌EOF 检测到 EOF，流断开，无需重新拉流,终止", zap.String("id", s.id))
+							s.cancelFunc()
+							return
+						}
+
+						if rtspURL, err := pullRestart.ReGetRtspURL(s.id); err == nil && rtspURL != "" {
+							_ = s.ResetRtspURL(rtspURL)
+							s.logger.Info("🔁 拉流地址已自动切换", zap.String("newRtsp", rtspURL))
+							continue
+						}
+					}
+
+					return // 不重连，退出
+				}
+
+				s.ClearRecorder()
+
+				s.logger.Info("✅ 分段完成", zap.String("file", segmentPath))
+
+				go func(data StoreRecordVideoDto) {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					if err := detectStore.StoreRecordVideo(ctx, data); err != nil {
+						s.logger.Error("🔴 推送视频记录失败", zap.Error(err))
+					} else {
+						s.logger.Info("✅ 推送视频记录完成", zap.Any("video", data))
+					}
+				}(StoreRecordVideoDto{
+					PathURL:        segmentPathReal,
+					StartTimestamp: start,
+					EndTimestamp:   end,
+					ID:             s.id,
+				})
+
+				time.Sleep(500 * time.Millisecond)
+			}
 		}
 	}()
 
@@ -742,4 +781,35 @@ func (s *Session) StopRecording() {
 	s.recordStatus.Store(false)
 	s.ClearRecorder()
 	s.logger.Info("📋 录制已手动停止")
+}
+
+func (s *Session) ResetRtspURL(rtspURL string) error {
+	now := time.Now().Unix()
+	last := s.lastResetAt.Load()
+	if now-last < 5 {
+		s.logger.Warn("⚠️ ResetRtspURL 触发过于频繁，已跳过", zap.String("id", s.id))
+		return nil
+	}
+	s.lastResetAt.Store(now)
+
+	s.ClearPuller()
+	s.ClearRecorder()
+	s.rtspURL = rtspURL
+	err := s.PreparePuller()
+	if err == nil {
+		s.BroadcastRtspUpdate(rtspURL)
+	}
+	return err
+}
+
+// BroadcastRtspUpdate 向两个模块的通道广播拉流地址变更
+func (s *Session) BroadcastRtspUpdate(newURL string) {
+	select {
+	case s.rtspUpdateChRun <- newURL:
+	default:
+	}
+	select {
+	case s.rtspUpdateChRecording <- newURL:
+	default:
+	}
 }

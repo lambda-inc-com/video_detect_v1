@@ -66,7 +66,9 @@ func (s *SessionManager) Run() {
 func (s *SessionManager) Close() {
 	s.logger.Info("sessionManager close...")
 	s.sessions.Range(func(key string, _session *Session) bool {
-		_session.cancelFunc()
+		if cancel := _session.GetCancelFunc(); cancel != nil {
+			cancel()
+		}
 		s.sessions.Delete(key)
 		_session.Reset()
 		s.sessionPool.Put(_session)
@@ -89,7 +91,9 @@ func (s *SessionManager) closeChRecv() {
 				continue
 			}
 			s.logger.Info(fmt.Sprintf(`📴 Stream session "%v" 关闭会话并清除`, id))
-			_session.cancelFunc()
+			if cancel := _session.GetCancelFunc(); cancel != nil {
+				cancel()
+			}
 			s.sessions.Delete(id)
 
 			// 重置_session 并放回池中
@@ -116,7 +120,9 @@ func (s *SessionManager) checkHealthySession() {
 					if _session.handledClose.CompareAndSwap(false, true) {
 						s.logger.Info("🧹 Tick 清理非运行 Session", zap.String("id", _session.id))
 
-						_session.cancelFunc()
+						if cancel := _session.GetCancelFunc(); cancel != nil {
+							cancel()
+						}
 						s.sessions.Delete(key)
 						s.sessionPool.Put(_session)
 
@@ -155,6 +161,8 @@ func (s *SessionManager) CreateSession(id, rtsp, aiURL string, options ...SetSes
 		Results: make([]DetectionResult, 0),
 	}
 	session.frameForDetection = make(chan []byte, 8)
+	session.rtspUpdateChRun = make(chan string, 1)
+	session.rtspUpdateChRecording = make(chan string, 1)
 
 	s.sessions.Store(id, session)
 
@@ -220,13 +228,18 @@ func (s *SessionManager) StopSessionDetect(id string) error {
 
 func (s *SessionManager) StartSessionDetect(id string, detectEndTimestamp int64) error {
 	if session, exists := s.sessions.Load(id); exists {
+		success := session.detectStatus.CompareAndSwap(false, true)
+		if !success {
+			// 已运行中，直接重置结束时间，返回
+			session.detectEndTimestamp.Store(detectEndTimestamp)
+			return nil
+		}
 		pushURL := GenPushURL(s.pushUrlInternalPre, session.streamKey)
 		err := session.PreParePusher(pushURL) // 准备推流资源
 		if err != nil {
 			return err
 		}
 		s.logger.Info("pusher starting:", zap.String("id", id), zap.String("pushRTMPURL", pushURL))
-		session.detectStatus.Store(true)
 		session.detectEndTimestamp.Store(detectEndTimestamp)
 		return nil
 	}
@@ -252,7 +265,7 @@ func (s *SessionManager) StartSessionRecord(id string, recordEndTimestamp int64,
 		}
 		session.recordEndTimestamp.Store(recordEndTimestamp)
 		recordPath, realPath := s.cfg.Store.RecordPath+"/"+session.id, s.cfg.Store.RecordPathReal+"/"+session.id
-		err := session.StartRecording(recordPath, realPath, segment, s.detectStore)
+		err := session.StartRecording(recordPath, realPath, segment, s.detectStore, s.pullerRestart)
 		if err != nil {
 			return err
 		}
@@ -268,7 +281,9 @@ func (s *SessionManager) RemoveSession(id string) {
 	}
 	_session.runningStatus.Store(false)
 	s.sessions.Delete(id)
-	_session.cancelFunc()
+	if cancel := _session.GetCancelFunc(); cancel != nil {
+		cancel()
+	}
 	_session.Reset()
 	s.sessionPool.Put(_session)
 }

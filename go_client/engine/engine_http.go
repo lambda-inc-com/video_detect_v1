@@ -221,11 +221,16 @@ func (d DetectHTTPServiceV1) StartDetect(c *gin.Context) error {
 			return status.Wrapper(http.StatusInternalServerError, err)
 		}
 		session = _session
-	}
 
-	err := d.manager.StartSessionDetect(session.id, req.EndTimestamp)
-	if err != nil {
-		return status.Wrapper(http.StatusInternalServerError, err)
+		// 开启识别
+		err = d.manager.StartSessionDetect(session.id, req.EndTimestamp)
+		if err != nil {
+			return status.Wrapper(http.StatusInternalServerError, err)
+		}
+
+	} else {
+		session.detectStatus.Store(true)
+		session.detectEndTimestamp.Store(req.EndTimestamp)
 	}
 
 	desc := session.GetDesc(d.manager.pushUrlPublicPre, d.manager.pushUrlPublicHlsPre)
