@@ -11,7 +11,7 @@ import (
 type DetectStore interface {
 	StoreDetectResultImage(ctx context.Context, data StoreDetectResultDto) error
 	StoreRecordVideo(ctx context.Context, data StoreRecordVideoDto) error
-	PushSessionNotify(ctx context.Context, sessionID string) error
+	PushSessionEndNotify(ctx context.Context, sessionID string) error
 }
 
 type StoreV1 struct {
@@ -49,6 +49,7 @@ func NewStoreV1(cfg *config.Config) (*StoreV1, error) {
 		redisClient:            client,
 		detectResultChannelKey: cfg.Store.DetectResultChannelKey,
 		recordVideoChannelKey:  cfg.Store.RecordVideoChannelKey,
+		sessionEndChannelKey:   cfg.Store.SessionEndChannelKey,
 	}, nil
 }
 
@@ -81,6 +82,6 @@ func (s StoreV1) StoreRecordVideo(ctx context.Context, data StoreRecordVideoDto)
 	return s.redisClient.Publish(ctx, s.recordVideoChannelKey, _data).Err()
 }
 
-func (s StoreV1) PushSessionNotify(ctx context.Context, sessionID string) error {
+func (s StoreV1) PushSessionEndNotify(ctx context.Context, sessionID string) error {
 	return s.redisClient.Publish(ctx, s.sessionEndChannelKey, sessionID).Err()
 }

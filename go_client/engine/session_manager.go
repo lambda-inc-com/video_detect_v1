@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 	"go_client/config"
 	"go_client/pkg/map_utils"
+	"path"
 	"runtime/debug"
 	"sort"
 	"sync"
@@ -173,6 +174,12 @@ func (s *SessionManager) CreateSession(id, rtsp, aiURL string, options ...SetSes
 
 	s.logger.Info("🚀 Session started", zap.String("id", id), zap.String("rtsp", rtsp))
 
+	pushURL := GenPushURL(s.pushUrlInternalPre, session.streamKey)
+	err := session.PreParePusher(pushURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare push stream: %w", err)
+	}
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -183,8 +190,8 @@ func (s *SessionManager) CreateSession(id, rtsp, aiURL string, options ...SetSes
 			aiURL,
 			s.cfg.Engine.UvicornSocket,
 			s.cfg.Engine.SocketPath,
-			s.cfg.Store.DetectResultPath+"/"+session.id,
-			s.cfg.Store.DetectResultPathReal+"/"+session.id,
+			path.Join(s.cfg.Store.DetectResultPath, session.id),
+			path.Join(s.cfg.Store.DetectResultPathReal, session.id),
 			s.detectStore,
 			s.pullerRestart,
 		)
@@ -234,12 +241,12 @@ func (s *SessionManager) StartSessionDetect(id string, detectEndTimestamp int64)
 			session.detectEndTimestamp.Store(detectEndTimestamp)
 			return nil
 		}
-		pushURL := GenPushURL(s.pushUrlInternalPre, session.streamKey)
-		err := session.PreParePusher(pushURL) // 准备推流资源
-		if err != nil {
-			return err
-		}
-		s.logger.Info("pusher starting:", zap.String("id", id), zap.String("pushRTMPURL", pushURL))
+		//pushURL := GenPushURL(s.pushUrlInternalPre, session.streamKey)
+		//err := session.PreParePusher(pushURL) // 准备推流资源
+		//if err != nil {
+		//	return err
+		//}
+		//s.logger.Info("pusher starting:", zap.String("id", id), zap.String("pushRTMPURL", pushURL))
 		session.detectEndTimestamp.Store(detectEndTimestamp)
 		return nil
 	}
@@ -264,7 +271,7 @@ func (s *SessionManager) StartSessionRecord(id string, recordEndTimestamp int64,
 			return nil
 		}
 		session.recordEndTimestamp.Store(recordEndTimestamp)
-		recordPath, realPath := s.cfg.Store.RecordPath+"/"+session.id, s.cfg.Store.RecordPathReal+"/"+session.id
+		recordPath, realPath := path.Join(s.cfg.Store.RecordPath, session.id), path.Join(s.cfg.Store.RecordPathReal, session.id)
 		err := session.StartRecording(recordPath, realPath, segment, s.detectStore, s.pullerRestart)
 		if err != nil {
 			return err

@@ -352,7 +352,7 @@ func (s *Session) PreParePusher(pushRTMPURL string) (err error) {
 func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath string, resultPath, resultPathReal string, detectStore DetectStore, pullRestart PullStreamEOFRestart) {
 	defer func() {
 		go func() {
-			_ = detectStore.PushSessionNotify(context.Background(), s.id)
+			_ = detectStore.PushSessionEndNotify(context.Background(), s.id)
 		}()
 		if r := recover(); r != nil {
 			s.logger.Error("❌ Panic recovered in Run", zap.Any("error", r), zap.Any("stacktrace", string(debug.Stack())))
@@ -371,9 +371,14 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 		s.logger.Info("📴 Stream session stopped")
 	}()
 
+	if err := os.MkdirAll(resultPath, 0755); err != nil {
+		s.logger.Error("创建识别结果目录失败", zap.Error(err))
+		return
+	}
+
 	// 初始化必要的组件
 	if s.frameForDetection == nil {
-		s.frameForDetection = make(chan []byte, 10) // 添加缓冲区大小
+		s.frameForDetection = make(chan []byte, 8) // 添加缓冲区大小
 	}
 
 	s.resultCache = &DetectionResultCache{}
@@ -470,8 +475,8 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 			}
 			if !s.detectStatus.Load() || time.Now().Unix() >= s.detectEndTimestamp.Load() {
 				s.detectStatus.CompareAndSwap(true, false)
-				s.ClearPusher() // 停止推流进程
-				continue        // 无需目标检测或推流，继续下一帧
+				//s.ClearPusher() // 停止推流进程
+				continue // 无需目标检测或推流，继续下一帧
 			}
 
 			// 将帧数据转换为 gocv.Mat
@@ -602,7 +607,7 @@ func (s *Session) asyncDetectLoop(uvicornSocket bool, socketPath string, aiDetec
 						_, exist := s.localCache.Get(results[i].Label)
 						if !exist {
 							store = true
-							err = s.localCache.Add(results[i].Label, struct{}{}, time.Minute*30)
+							err = s.localCache.Add(results[i].Label, struct{}{}, time.Minute*5)
 							if err != nil {
 								s.logger.Error("session localCache 保存失败", zap.Error(err))
 							}
@@ -630,8 +635,8 @@ func (s *Session) asyncDetectLoop(uvicornSocket bool, socketPath string, aiDetec
 					// 保存图像
 					filename := fmt.Sprintf("detected_%d.jpg", time.Now().UnixNano())
 					//fullPath := filepath.Join("detected_images", filename)
-					fullPath := resultPath + filename
-					fullPathReal := resultPathReal + filename
+					fullPath := filepath.Join(resultPath, filename)
+					fullPathReal := filepath.Join(resultPathReal + filename)
 					if ok := gocv.IMWrite(fullPath, img); !ok {
 						s.logger.Error("图像保存失败", zap.String("path", fullPath))
 						return
