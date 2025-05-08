@@ -118,7 +118,6 @@ func (s *SessionManager) checkHealthySession() {
 
 						_session.cancelFunc()
 						s.sessions.Delete(key)
-						_session.Reset()
 						s.sessionPool.Put(_session)
 
 					}
@@ -155,7 +154,7 @@ func (s *SessionManager) CreateSession(id, rtsp, aiURL string, options ...SetSes
 		RWMutex: sync.RWMutex{},
 		Results: make([]DetectionResult, 0),
 	}
-	session.frameForDetection = make(chan []byte, 32)
+	session.frameForDetection = make(chan []byte, 8)
 
 	s.sessions.Store(id, session)
 
@@ -251,7 +250,7 @@ func (s *SessionManager) StartSessionRecord(id string, recordEndTimestamp int64,
 			session.recordEndTimestamp.Store(recordEndTimestamp)
 			return nil
 		}
-
+		session.recordEndTimestamp.Store(recordEndTimestamp)
 		recordPath, realPath := s.cfg.Store.RecordPath+"/"+session.id, s.cfg.Store.RecordPathReal+"/"+session.id
 		err := session.StartRecording(recordPath, realPath, segment, s.detectStore)
 		if err != nil {

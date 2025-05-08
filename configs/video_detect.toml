@@ -37,8 +37,10 @@ min-idle-conns = 5
 
 
 [store]
+session-end-channel-key = "session:end:channel"
 detect-result-channel-key = "detect:result:channel"
 record-video-channel-key = "record:video:channel"
+
 record-path = "/app/recordings"
 record-path-real = "/api/v1/lib/core/downloadFile?file=/recordings"
 

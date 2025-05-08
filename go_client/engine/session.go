@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"image"
 	"image/color"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,7 +46,7 @@ type DetectionResultCache struct {
 	推流： 开启推流 暂停推流
 */
 
-// 修改对象池定义
+// 对象池定义
 var (
 	imgBufPool = sync.Pool{
 		New: func() interface{} {
@@ -59,7 +61,7 @@ var (
 	}
 )
 
-// 添加FFmpeg进程管理相关的常量
+// FFmpeg进程管理相关的常量
 const (
 	defaultFFmpegBufferSize = 1024 * 1024 // 1MB buffer
 	maxFFmpegRetries        = 3
@@ -338,8 +340,11 @@ func (s *Session) PreParePusher(pushRTMPURL string) (err error) {
 
 func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath string, resultPath, resultPathReal string, detectStore DetectStore, pullRestart PullStreamEOFRestart) {
 	defer func() {
+		go func() {
+			_ = detectStore.PushSessionNotify(context.Background(), s.id)
+		}()
 		if r := recover(); r != nil {
-			s.logger.Error("❌ Panic recovered in Run", zap.Any("error", r))
+			s.logger.Error("❌ Panic recovered in Run", zap.Any("error", r), zap.Any("stacktrace", string(debug.Stack())))
 		}
 
 		// 关闭资源
@@ -351,6 +356,7 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 		s.detectStatus.Store(false)
 		s.recordStatus.Store(false)
 		s.SendIDToCloseCh()
+		s.Reset()
 		s.logger.Info("📴 Stream session stopped")
 	}()
 
@@ -410,15 +416,17 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 			if err != nil {
 				if err == io.EOF || errors.Is(err, PullReaderIsNil) {
 					eofTimes++
-					s.logger.Error("❌EOF 检测到 EOF，流断开，终止", zap.String("id", s.id))
 					if !s.pullEOFAutoRestart.Load() || eofTimes > s.retryTimes { // 无需重新拉流
+						s.logger.Error("❌EOF 检测到 EOF，流断开，无需重新拉流,终止", zap.String("id", s.id))
 						s.cancelFunc()
 						return
 					}
+					s.logger.Error("❌EOF 检测到 EOF，流断开，终止", zap.String("id", s.id))
 
 					rtspURL, err := pullRestart.ReGetRtspURL(s.id)
 					if err != nil || rtspURL == "" {
 						s.logger.Error("❌ 重新获取拉流地址失败", zap.String("id", s.id), zap.Error(err))
+						// todo 是直接退出还是重试？？
 						s.cancelFunc()
 						return
 					}
@@ -446,15 +454,17 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 				continue
 			}
 
-			if imgTmp, err := gocv.NewMatFromBytes(s.height, s.width, gocv.MatTypeCV8UC3, s.imgBuf); err == nil && !imgTmp.Empty() {
+			imgTmp, err := gocv.NewMatFromBytes(s.height, s.width, gocv.MatTypeCV8UC3, s.imgBuf)
+			if err == nil && !imgTmp.Empty() {
 				if s.img != nil {
 					s.img.Close()
 				}
-				s.img = &imgTmp // 使用指针
+				s.img = matPool.Get().(*gocv.Mat)
+				*s.img = imgTmp.Clone()
+				imgTmp.Close()
 			} else {
 				continue
 			}
-
 			// 写入录制
 			if s.recordStatus.Load() && s.recordStdin != nil {
 				err = s.RecorderWrite(s.imgBuf)
@@ -484,36 +494,39 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 			}
 
 			// 控制识别频率（基于时间）
-			if s.detectStatus.Load() && time.Since(lastDetect) >= detectInterval && s.img != nil {
+			if s.detectStatus.Load() && time.Since(lastDetect) >= detectInterval {
 				lastDetect = time.Now()
+
 				func() {
 					s.resultCache.Lock()
 					defer s.resultCache.Unlock()
 					s.resultCache.Results = nil
 				}()
 
-				// 使用正确的IMEncodeWithParams参数
-				imgBytes, err := gocv.IMEncodeWithParams(gocv.JPEGFileExt, *s.img, []int{
-					gocv.IMWriteJpegQuality, 85,
-				})
-				if err != nil {
-					s.logger.Error("图像编码失败", zap.Error(err))
-					continue
-				}
+				if s.img != nil && !s.img.Empty() { // ✅ 避免 nil dereference
+					// 编码并入识别队列
+					imgBytes, err := gocv.IMEncodeWithParams(gocv.JPEGFileExt, *s.img, []int{
+						gocv.IMWriteJpegQuality, 85,
+					})
+					if err != nil {
+						s.logger.Error("图像编码失败", zap.Error(err))
+					} else {
+						select {
+						case s.frameForDetection <- imgBytes.GetBytes():
+						default:
+							s.logger.Debug("识别队列已满，跳过当前帧")
+						}
+					}
 
-				select {
-				case s.frameForDetection <- imgBytes.GetBytes():
-				default:
-					s.logger.Debug("识别队列已满，跳过当前帧")
-				}
-
-				// 只有 识别才开启实时流...
-				// 推送给 FFmpeg 推流进程
-				err = s.PusherWrite(s.img.ToBytes())
-				if err != nil {
-					s.logger.Error(fmt.Sprintf("[-] sessionID:%s 写入推流失败", s.id), zap.Error(err))
-					s.cancelFunc()
-					return
+					// 推流
+					err = s.PusherWrite(s.img.ToBytes())
+					if err != nil {
+						s.logger.Error(fmt.Sprintf("[-] sessionID:%s 写入推流失败", s.id), zap.Error(err))
+						s.cancelFunc()
+						return
+					}
+				} else {
+					s.logger.Warn("跳过当前帧：s.img 为 nil 或为空")
 				}
 			}
 
@@ -646,29 +659,31 @@ func (s *Session) StartRecording(recordDir, realDir string, segment time.Duratio
 	}
 
 	s.recordStatus.Store(true)
-	s.recordEndTimestamp.Store(time.Now().Add(segment).Unix())
 
 	go func() {
 		defer func() {
 			s.recordStatus.Store(false)
 			s.recordEndTimestamp.Store(0)
-			s.ClearRecorder() // 清理录制资源
+			s.ClearRecorder()
 		}()
 
 		for {
-			if !s.recordStatus.Load() || time.Now().Unix() >= s.recordEndTimestamp.Load() {
+			now := time.Now()
+			if !s.recordStatus.Load() || now.Unix() >= s.recordEndTimestamp.Load() {
 				s.logger.Info("⏹️ 录制任务结束")
 				return
 			}
 
-			// 生成录制文件名
-			formatTime := time.Now().Local().Format("2006-01-02_15-04-05")
+			// 生成本段文件名
+			//formatTime := now.Local().Format("2006-01-02_15:04:05")
+			formatTime := uuid.New().String()
 			segmentPath := filepath.Join(recordDir, formatTime+".mp4")
 			segmentPathReal := filepath.Join(realDir, formatTime+".mp4")
 			s.logger.Info("📽️ 开始录制分段（RTSP直录）", zap.String("file", segmentPath))
 
-			// 直接用 RTSP 地址调用 FFmpeg 录制
+			// 每段使用 ffmpeg 录制 segment 秒的视频
 			cmd := exec.CommandContext(s.ctx, "ffmpeg",
+				"-loglevel", "quiet", // ✅ 关闭所有日志输出
 				"-rtsp_transport", "tcp",
 				"-timeout", "5000000",
 				"-analyzeduration", "5000000",
@@ -680,59 +695,26 @@ func (s *Session) StartRecording(recordDir, realDir string, segment time.Duratio
 				"-pix_fmt", "yuv420p",
 				"-movflags", "+faststart",
 				"-f", "mp4",
-				"-an", // 不写音频避免封装失败
+				"-an",
 				"-t", fmt.Sprintf("%.0f", segment.Seconds()),
 				"-y",
 				segmentPath,
 			)
-
 			cmd.Stderr = os.Stderr
 
-			//if err := cmd.Start(); err != nil {
-			//	s.logger.Error("启动FFmpeg录制失败", zap.Error(err))
-			//	return
-			//}
+			segmentStart := now.Unix()
 
 			if err := cmd.Run(); err != nil {
 				s.logger.Error("FFmpeg录制执行失败", zap.Error(err))
 				return
 			}
 
-			s.recordFFmpegCmd = cmd
-			s.recordStdin = nil // 不再需要手动写入
+			s.ClearRecorder()
 
-			segmentStart := time.Now().Unix()
-			segmentEnd := time.Now().Add(segment)
-			ticker := time.NewTicker(500 * time.Millisecond)
-			defer ticker.Stop()
-
-		WAIT_LOOP:
-			for {
-				select {
-				case <-ticker.C:
-					if !s.recordStatus.Load() || time.Now().Unix() >= s.recordEndTimestamp.Load() || time.Now().After(segmentEnd) {
-						break WAIT_LOOP
-					}
-				case <-s.ctx.Done():
-					s.logger.Info("录制任务中断：收到 context 退出信号")
-					return
-				}
-			}
-
-			// 停止当前段
-			s.ClearRecorder() // 清理当前段资源
-
+			segmentStop := time.Now().Unix()
 			s.logger.Info("✅ 分段录制完成", zap.String("file", segmentPath))
 
-			// 推送视频记录
-			segmentStop := time.Now().Unix()
-			dto := StoreRecordVideoDto{
-				PathURL:        segmentPathReal,
-				StartTimestamp: segmentStart,
-				EndTimestamp:   segmentStop,
-				ID:             s.id,
-			}
-
+			// 异步推送结果
 			go func(data StoreRecordVideoDto) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
@@ -741,7 +723,15 @@ func (s *Session) StartRecording(recordDir, realDir string, segment time.Duratio
 				} else {
 					s.logger.Info("✅ 已推送视频记录", zap.Any("video", data))
 				}
-			}(dto)
+			}(StoreRecordVideoDto{
+				PathURL:        segmentPathReal,
+				StartTimestamp: segmentStart,
+				EndTimestamp:   segmentStop,
+				ID:             s.id,
+			})
+
+			// 睡眠直到下一个段的起始（避免极快循环，也可省略）
+			time.Sleep(500 * time.Millisecond)
 		}
 	}()
 

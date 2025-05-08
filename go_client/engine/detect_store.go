@@ -11,12 +11,14 @@ import (
 type DetectStore interface {
 	StoreDetectResultImage(ctx context.Context, data StoreDetectResultDto) error
 	StoreRecordVideo(ctx context.Context, data StoreRecordVideoDto) error
+	PushSessionNotify(ctx context.Context, sessionID string) error
 }
 
 type StoreV1 struct {
 	redisClient            *redis.Client
 	detectResultChannelKey string
 	recordVideoChannelKey  string
+	sessionEndChannelKey   string
 }
 
 func NewStoreV1WithClient(cfg *config.Config, redisClient *redis.Client) (*StoreV1, error) {
@@ -24,6 +26,7 @@ func NewStoreV1WithClient(cfg *config.Config, redisClient *redis.Client) (*Store
 		redisClient:            redisClient,
 		detectResultChannelKey: cfg.Store.DetectResultChannelKey,
 		recordVideoChannelKey:  cfg.Store.RecordVideoChannelKey,
+		sessionEndChannelKey:   cfg.Store.SessionEndChannelKey,
 	}, nil
 }
 
@@ -76,4 +79,8 @@ func (s StoreV1) StoreRecordVideo(ctx context.Context, data StoreRecordVideoDto)
 	_data, _ := jsoniter.MarshalToString(data)
 
 	return s.redisClient.Publish(ctx, s.recordVideoChannelKey, _data).Err()
+}
+
+func (s StoreV1) PushSessionNotify(ctx context.Context, sessionID string) error {
+	return s.redisClient.Publish(ctx, s.sessionEndChannelKey, sessionID).Err()
 }

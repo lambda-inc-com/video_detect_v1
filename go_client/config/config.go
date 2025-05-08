@@ -44,6 +44,7 @@ type Engine struct {
 type Store struct {
 	DetectResultChannelKey string `toml:"detect-result-channel-key"` // 识别结果推送Key
 	RecordVideoChannelKey  string `toml:"record-video-channel-key"`  // 视频录制推送Key
+	SessionEndChannelKey   string `toml:"session-end-channel-key"`   // 会话结束推送通知Key
 
 	RecordPath     string `toml:"record-path"`      // 录制文件路径
 	RecordPathReal string `toml:"record-path-real"` // 录制文件路径(系统真实路径)
