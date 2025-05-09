@@ -492,27 +492,6 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 				continue
 			}
 
-			// 获取最新的检测结果
-			var latestResults []DetectionResult
-			func() {
-				s.resultCache.RLock()
-				defer s.resultCache.RUnlock()
-				if len(s.resultCache.Results) > 0 {
-					latestResults = make([]DetectionResult, len(s.resultCache.Results))
-					copy(latestResults, s.resultCache.Results)
-				}
-			}()
-
-			// 应用副本的识别结果
-			if len(latestResults) > 0 && s.img != nil {
-				for _, r := range latestResults {
-					rect := image.Rect(r.X1, r.Y1, r.X2, r.Y2)
-					_ = gocv.Rectangle(s.img, rect, color.RGBA{0, 255, 0, 0}, 2)
-					_ = gocv.PutText(s.img, r.Label, image.Pt(r.X1, r.Y1-10),
-						gocv.FontHersheyPlain, 1.2, color.RGBA{255, 0, 0, 0}, 2)
-				}
-			}
-
 			// 控制识别频率（基于时间）
 			if s.detectStatus.Load() && time.Since(lastDetect) >= detectInterval {
 				lastDetect = time.Now()
@@ -538,15 +517,39 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 						}
 					}
 
-					// 推流
-					err = s.PusherWrite(s.img.ToBytes())
-					if err != nil {
-						s.logger.Error(fmt.Sprintf("[-] sessionID:%s 写入推流失败", s.id), zap.Error(err))
-						s.cancelFunc()
-						return
-					}
 				} else {
 					s.logger.Warn("跳过当前帧：s.img 为 nil 或为空")
+				}
+			}
+
+			// 获取最新的检测结果
+			var latestResults []DetectionResult
+			func() {
+				s.resultCache.RLock()
+				defer s.resultCache.RUnlock()
+				if len(s.resultCache.Results) > 0 {
+					latestResults = make([]DetectionResult, len(s.resultCache.Results))
+					copy(latestResults, s.resultCache.Results)
+				}
+			}()
+
+			// 应用副本的识别结果
+			if len(latestResults) > 0 && s.img != nil {
+				for _, r := range latestResults {
+					rect := image.Rect(r.X1, r.Y1, r.X2, r.Y2)
+					_ = gocv.Rectangle(s.img, rect, color.RGBA{0, 255, 0, 0}, 2)
+					_ = gocv.PutText(s.img, r.Label, image.Pt(r.X1, r.Y1-10),
+						gocv.FontHersheyPlain, 1.2, color.RGBA{255, 0, 0, 0}, 2)
+				}
+			}
+
+			if s.detectStatus.Load() && s.img != nil && !s.img.Empty() {
+				// 推流
+				err = s.PusherWrite(s.img.ToBytes())
+				if err != nil {
+					s.logger.Error(fmt.Sprintf("[-] sessionID:%s 写入推流失败", s.id), zap.Error(err))
+					s.cancelFunc()
+					return
 				}
 			}
 
@@ -636,7 +639,7 @@ func (s *Session) asyncDetectLoop(uvicornSocket bool, socketPath string, aiDetec
 					filename := fmt.Sprintf("detected_%d.jpg", time.Now().UnixNano())
 					//fullPath := filepath.Join("detected_images", filename)
 					fullPath := filepath.Join(resultPath, filename)
-					fullPathReal := filepath.Join(resultPathReal + filename)
+					fullPathReal := filepath.Join(resultPathReal, filename)
 					if ok := gocv.IMWrite(fullPath, img); !ok {
 						s.logger.Error("图像保存失败", zap.String("path", fullPath))
 						return
@@ -789,32 +792,45 @@ func (s *Session) StopRecording() {
 }
 
 func (s *Session) ResetRtspURL(rtspURL string) error {
-	now := time.Now().Unix()
+	nowUnix := time.Now().Unix()
 	last := s.lastResetAt.Load()
-	if now-last < 5 {
+	if nowUnix-last < 5 {
 		s.logger.Warn("⚠️ ResetRtspURL 触发过于频繁，已跳过", zap.String("id", s.id))
 		return nil
 	}
-	s.lastResetAt.Store(now)
+	s.lastResetAt.Store(nowUnix)
 
 	s.ClearPuller()
 	s.ClearRecorder()
 	s.rtspURL = rtspURL
 	err := s.PreparePuller()
 	if err == nil {
-		s.BroadcastRtspUpdate(rtspURL)
+		s.BroadcastRtspUpdate(nowUnix, rtspURL)
 	}
 	return err
 }
 
 // BroadcastRtspUpdate 向两个模块的通道广播拉流地址变更
-func (s *Session) BroadcastRtspUpdate(newURL string) {
+func (s *Session) BroadcastRtspUpdate(nowUnix int64, newURL string) {
+	if !s.runningStatus.Load() {
+		// 已关闭不广播
+		return
+	}
+
+	//if s.detectStatus.Load() && nowUnix <= s.detectEndTimestamp.Load() { // 只在 识别有效内推送
+
+	// 由于 拉流一直存在所以需要一直推送更新
 	select {
 	case s.rtspUpdateChRun <- newURL:
 	default:
 	}
-	select {
-	case s.rtspUpdateChRecording <- newURL:
-	default:
+	//}
+
+	if s.recordStatus.Load() && nowUnix <= s.recordEndTimestamp.Load() { // 只在 录制有效内推送
+		select {
+		case s.rtspUpdateChRecording <- newURL:
+		default:
+		}
 	}
+
 }
