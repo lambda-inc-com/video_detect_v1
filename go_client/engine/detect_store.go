@@ -67,6 +67,7 @@ type StoreRecordVideoDto struct {
 	StartTimestamp int64  `json:"startTimestamp"` // 开始时间戳
 	EndTimestamp   int64  `json:"endTimestamp"`   // 结束时间戳
 	ID             string `json:"id"`             // 识别会话ID
+	ExpirationDays int    `json:"expirationDays"` // 文件过期天数
 }
 
 func (s StoreV1) StoreDetectResultImage(ctx context.Context, data StoreDetectResultDto) error {

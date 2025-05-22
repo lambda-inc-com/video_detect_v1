@@ -139,8 +139,9 @@ type StartRecordReq struct {
 
 // 录制操作Req
 type RecordActionReq struct {
-	EndTimestamp int64 `json:"endTimestamp" validate:"gte=0"`  // 录制结束时间戳 unix
-	SegmentedSec int64 `json:"segmentedSec" validate:"gte=60"` // 分段时长 秒
+	EndTimestamp   int64 `json:"endTimestamp" validate:"gte=0"`   // 录制结束时间戳 unix
+	SegmentedSec   int64 `json:"segmentedSec" validate:"gte=60"`  // 分段时长 秒
+	ExpirationDays int32 `json:"expirationDays" validate:"gte=0"` // 文件过期天数
 }
 
 type SessionExistenceResp struct {

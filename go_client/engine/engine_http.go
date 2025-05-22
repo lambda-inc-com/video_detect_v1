@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/base64"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"go_client/config"
@@ -12,10 +13,12 @@ import (
 	"image/color"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 type DetectHTTPService interface {
+	Auth(c *gin.Context) error               // 认证
 	CreateSession(c *gin.Context) error      // 创建识别会话
 	GetAllSessionDesc(c *gin.Context) error  // 获取会话描述列表
 	GetSessionDescByID(c *gin.Context) error // 根据ID获取会话描述
@@ -31,10 +34,11 @@ type DetectHTTPService interface {
 }
 
 func RegisterDetectHTTPService(eng *gin.Engine, srv DetectHTTPService) {
-	eng.POST("/test", WrapHandler(srv.DetectTest))
 
 	detect := eng.Group("/session/v1")
+	detect.Use(WrapHandler(srv.Auth)) // 开启token认证
 	{
+		detect.POST("/test", WrapHandler(srv.DetectTest))
 
 		detect.GET("/list", WrapHandler(srv.GetAllSessionDesc))
 
@@ -61,6 +65,16 @@ type DetectHTTPServiceV1 struct {
 
 func NewDetectHTTPServiceV1(cfg *config.Config, manager *SessionManager, logger *zap.Logger) DetectHTTPService {
 	return DetectHTTPServiceV1{cfg, manager, logger}
+}
+
+func (d DetectHTTPServiceV1) Auth(c *gin.Context) error {
+	token := c.Request.Header.Get("Authorization")
+	if token != "Bearer "+d.cfg.Server.APIToken {
+		c.Abort()
+		return status.Wrapper(http.StatusUnauthorized, errors.New("未认证"))
+	}
+	c.Next()
+	return nil
 }
 
 func (d DetectHTTPServiceV1) DetectTest(c *gin.Context) error {
@@ -131,6 +145,7 @@ func (d DetectHTTPServiceV1) CreateSession(c *gin.Context) error {
 	if err := BindParams(&action, c.Params); err != nil {
 		return err
 	}
+	action.SessionID = strings.ReplaceAll(action.SessionID, "_", "/") // 特殊：防止获取不到 xxx/xxx的 sessionID
 
 	var req CreateSessionReq
 	err := Bind(&req, c.Request.Body)
@@ -172,6 +187,7 @@ func (d DetectHTTPServiceV1) GetSessionDescByID(c *gin.Context) error {
 	if err := BindParams(&action, c.Params); err != nil {
 		return err
 	}
+	action.SessionID = strings.ReplaceAll(action.SessionID, "_", "/") // 特殊：防止获取不到 xxx/xxx的 sessionID
 	desc, ok := d.manager.GetSessionDescByID(action.SessionID)
 
 	result.New(http.StatusOK).
@@ -185,6 +201,7 @@ func (d DetectHTTPServiceV1) StopDetect(c *gin.Context) error {
 	if err := BindParams(&action, c.Params); err != nil {
 		return err
 	}
+	action.SessionID = strings.ReplaceAll(action.SessionID, "_", "/") // 特殊：防止获取不到 xxx/xxx的 sessionID
 
 	err := d.manager.StopSessionDetect(action.SessionID)
 	if err != nil {
@@ -200,6 +217,7 @@ func (d DetectHTTPServiceV1) StartDetect(c *gin.Context) error {
 	if err := BindParams(&action, c.Params); err != nil {
 		return err
 	}
+	action.SessionID = strings.ReplaceAll(action.SessionID, "_", "/") // 特殊：防止获取不到 xxx/xxx的 sessionID
 
 	var req StartDetectReq
 	if err := Bind(&req, c.Request.Body); err != nil {
@@ -244,6 +262,7 @@ func (d DetectHTTPServiceV1) StopRecord(c *gin.Context) error {
 	if err := BindParams(&action, c.Params); err != nil {
 		return err
 	}
+	action.SessionID = strings.ReplaceAll(action.SessionID, "_", "/") // 特殊：防止获取不到 xxx/xxx的 sessionID
 
 	err := d.manager.StopSessionRecord(action.SessionID)
 	if err != nil {
@@ -259,6 +278,7 @@ func (d DetectHTTPServiceV1) StartRecord(c *gin.Context) error {
 	if err := BindParams(&action, c.Params); err != nil {
 		return err
 	}
+	action.SessionID = strings.ReplaceAll(action.SessionID, "_", "/") // 特殊：防止获取不到 xxx/xxx的 sessionID
 
 	var req StartRecordReq
 	if err := Bind(&req, c.Request.Body); err != nil {
@@ -284,6 +304,7 @@ func (d DetectHTTPServiceV1) StartRecord(c *gin.Context) error {
 
 	err := d.manager.StartSessionRecord(
 		session.id,
+		req.ExpirationDays,
 		req.EndTimestamp,
 		time.Second*time.Duration(req.SegmentedSec),
 	)
@@ -302,6 +323,7 @@ func (d DetectHTTPServiceV1) RemoveSession(c *gin.Context) error {
 	if err := BindParams(&action, c.Params); err != nil {
 		return err
 	}
+	action.SessionID = strings.ReplaceAll(action.SessionID, "_", "/") // 特殊：防止获取不到 xxx/xxx的 sessionID
 
 	d.manager.RemoveSession(action.SessionID)
 

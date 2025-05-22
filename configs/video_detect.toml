@@ -1,7 +1,7 @@
 [server]
 listen-http-addr = "0.0.0.0:8080"
 grpc-peer-addr = "0.0.0.0:8081"
-
+api-token = "c362077ff38ef4c81b8278e91a956b2fd3c410b9a3906ac0f728813a2d3fb5fd"
 use-h2c = true
 
 
@@ -51,3 +51,7 @@ detect-result-path-real = "/api/v1/lib/core/downloadFile?file=/detects"
 base-url = "https://183.215.46.57:1443/artemis"
 app-key = "25373899"
 app-secret = "E9TFZHKRNwsNOPbVFL6W"
+
+[wvp-video]
+base-url = "http://183.215.26.38:7011"
+token = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjNlNzk2NDZjNGRiYzQwODM4M2E5ZWVkMDlmMmI4NWFlIn0.eyJqdGkiOiJsRmxrT1JLU18tWnV5Ti1GRVExRlpBIiwiaWF0IjoxNzQ1NDc0NDgwLCJleHAiOjE3NDgwNjY0ODAsIm5iZiI6MTc0NTQ3NDQ4MCwic3ViIjoibG9naW4iLCJhdWQiOiJBdWRpZW5jZSIsInVzZXJOYW1lIjoiYWRtaW4ifQ.NTWrJhnYjyXolnQyWJeT_dvXGmptQo9XemAMnrxbPVmj7xAHcbnb5Z9TF8VJ0uyU6zncq0ffbyBhdSUCvmgdJFe75Ww6AJHZI6R0o-4rqIrAT_KFqmVADFCBnZ-eAgJ99LhGsspHbEEsAchjTY-OV_IJIM9e-1TriGimcjKnZGtTvGNJrJ6lEXfVGRINjUm_Br_I49PVQ5N9mbFfjVBn5ZMEJj1hZlAWRANQ1MnESmCjjeFBkGYCcAUcVUqpQUUPj-kllB1OLZxjaM7XTeU7FC8uUcizB-7XFMXUdhynoU7jsyJhRqCG6akEPoaCgrnuP63NjJ3-U9nY0c66jpWXhA"

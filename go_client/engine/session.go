@@ -79,8 +79,9 @@ type Session struct {
 	streamKey string // 用于拼接 RTMP 推流地址
 	rtspURL   string // 拉流链接
 
-	detectEndTimestamp atomic.Int64 // 识别结束时间戳
-	recordEndTimestamp atomic.Int64 // 录制结束时间戳
+	detectEndTimestamp   atomic.Int64 // 识别结束时间戳
+	recordEndTimestamp   atomic.Int64 // 录制结束时间戳
+	recordExpirationDays atomic.Int32 // 录制文件过期天数
 
 	lastResetAt atomic.Int64
 
@@ -720,13 +721,19 @@ func (s *Session) StartRecording(recordDir, realDir string, segment time.Duratio
 					"-analyzeduration", "5000000",
 					"-probesize", "10000000",
 					"-i", s.rtspURL,
+					"-vf", "scale=640:360", // 降为标清，省空间
 					"-c:v", "libx264",
-					"-preset", "ultrafast",
+					//"-b:v", "500k", // 静止画面建议从 500k 起
+					//"-maxrate", "500k", // 限制峰值
+					//"-bufsize", "1000k", // 缓冲区大小
+					//"-crf", "28", // CRF 值越大越模糊，推荐 23~28，28 适合静止场景
+					"-crf", "30", // 高压缩率
+					"-preset", "medium", // 默认值，压缩率好，速度尚可
 					"-tune", "zerolatency",
 					"-pix_fmt", "yuv420p",
 					"-movflags", "+faststart",
 					"-f", "mp4",
-					"-an",
+					"-an", // 不录制音频
 					"-t", fmt.Sprintf("%.0f", segment.Seconds()),
 					"-y", segmentPath,
 				)
@@ -734,6 +741,10 @@ func (s *Session) StartRecording(recordDir, realDir string, segment time.Duratio
 
 				start := time.Now().Unix()
 				err := cmd.Run()
+				// 设置文件权限为 0664
+				if chmodErr := os.Chmod(segmentPath, 0664); chmodErr != nil {
+					s.logger.Error("设置权限失败", zap.Error(chmodErr))
+				}
 				end := time.Now().Unix()
 
 				if err != nil {
@@ -775,6 +786,7 @@ func (s *Session) StartRecording(recordDir, realDir string, segment time.Duratio
 					StartTimestamp: start,
 					EndTimestamp:   end,
 					ID:             s.id,
+					ExpirationDays: int(s.recordExpirationDays.Load()),
 				})
 
 				time.Sleep(500 * time.Millisecond)

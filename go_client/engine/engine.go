@@ -115,8 +115,7 @@ func NewDetectEngine(args []string) (engine *DetectionEngine, err error) {
 func NewPullEOFRestart(cfg *config.Config) PullStreamEOFRestart {
 	switch cfg.Engine.PullRestartMode {
 	case "wvp":
-		//	todo
-		fallthrough
+		return GetWVPRtspUrl(cfg)
 	default: // hk
 		return GetHkRtspUrl(cfg)
 	}

@@ -1,7 +1,7 @@
 [server]
 listen-http-addr = "0.0.0.0:8080"
 grpc-peer-addr = "0.0.0.0:8081"
-
+api-token = "c362077ff38ef4c81b8278e91a956b2fd3c410b9a3906ac0f728813a2d3fb5fd"
 use-h2c = true
 
 [engine]

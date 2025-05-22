@@ -262,15 +262,17 @@ func (s *SessionManager) StopSessionRecord(id string) error {
 	return nil
 }
 
-func (s *SessionManager) StartSessionRecord(id string, recordEndTimestamp int64, segment time.Duration) error {
+func (s *SessionManager) StartSessionRecord(id string, recordExpirationDays int32, recordEndTimestamp int64, segment time.Duration) error {
 	if session, exists := s.sessions.Load(id); exists {
 		success := session.recordStatus.CompareAndSwap(false, true)
 		if !success {
 			// 已运行中，直接重置结束时间，返回
 			session.recordEndTimestamp.Store(recordEndTimestamp)
+			session.recordExpirationDays.Store(recordExpirationDays)
 			return nil
 		}
 		session.recordEndTimestamp.Store(recordEndTimestamp)
+		session.recordExpirationDays.Store(recordExpirationDays)
 		recordPath, realPath := path.Join(s.cfg.Store.RecordPath, session.id), path.Join(s.cfg.Store.RecordPathReal, session.id)
 		err := session.StartRecording(recordPath, realPath, segment, s.detectStore, s.pullerRestart)
 		if err != nil {

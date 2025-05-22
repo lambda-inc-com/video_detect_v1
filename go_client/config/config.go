@@ -14,7 +14,8 @@ type Config struct {
 	Redis  Redis  `toml:"redis"`
 	Store  Store  `toml:"store"`
 
-	HKVideo HKVideo `toml:"hk-video"`
+	HKVideo  HKVideo  `toml:"hk-video"`
+	WVPVideo WVPVideo `toml:"wvp-video"`
 }
 
 type env struct {
@@ -22,9 +23,10 @@ type env struct {
 }
 
 type Server struct {
-	UseH2C         bool   `toml:"use-h2c"`
-	ListenHttpAddr string `toml:"listen-http-addr"`
-	GrpcPeerAddr   string `toml:"grpc-peer-addr"`
+	UseH2C         bool   `toml:"use-h2c"`          // 是否启用 h2c
+	ListenHttpAddr string `toml:"listen-http-addr"` // http监听端口
+	GrpcPeerAddr   string `toml:"grpc-peer-addr"`   // grpc 监听端口
+	APIToken       string `toml:"api-token"`        // apiToken
 }
 
 type Engine struct {
@@ -99,4 +101,9 @@ type HKVideo struct {
 	BaseURL   string `toml:"base-url"`
 	AppKey    string `toml:"app-key"`
 	AppSecret string `toml:"app-secret"`
+}
+
+type WVPVideo struct {
+	BaseURL string `toml:"base-url"`
+	Token   string `toml:"token"`
 }
