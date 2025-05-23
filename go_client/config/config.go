@@ -36,6 +36,7 @@ type Engine struct {
 	CloseChanCap        int    `toml:"close-chan-cap"`          // 关闭识别流会话通道的缓存大小
 	SocketPath          string `toml:"socket-path"`             // unix socket 地址
 	DetectAIURL         string `toml:"detect-ai-url"`           // 识别请求URL
+	DetectHostStatusURL string `toml:"detect-host-status-url"`  // 识别服务器状态URL
 	PushUrlInternalPre  string `toml:"push-url-internal-pre"`   // 推流使用前缀 ：如 rtmp://rtmp-server/live/stream
 	PushUrlPublicPre    string `toml:"push-url-public-pre"`     // 播放展示用：如 rtmp://mydomain.com/live/stream
 	PushUrlPublicHlsPre string `toml:"push-url-public-hls-pre"` // 播放Hls展示用：如 http://mydomain.com/live/stream

@@ -128,7 +128,8 @@ type StartDetectReq struct {
 
 // 识别操作Req
 type DetectActionReq struct {
-	EndTimestamp int64 `json:"endTimestamp" validate:"gte=0"` // 识别结束时间戳 unix
+	EndTimestamp     int64   `json:"endTimestamp" validate:"gte=0"`             // 识别结束时间戳 unix
+	MaxResourcesUsed float64 `json:"maxResourcesUsed" validate:"gte=0,lte=100"` // 最大资源使用率
 }
 
 // 开始录制

@@ -8,3 +8,15 @@ services:
     ports:
       - "5000:5000"
     restart: unless-stopped
+
+    privileged: true
+    pid: "host"
+    volumes:
+      - /proc:/host_proc:ro
+      - /sys:/host_sys:ro
+    # 如果需要访问 GPU： 只在 Docker Swarm 模式
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - capabilities: [ gpu ]

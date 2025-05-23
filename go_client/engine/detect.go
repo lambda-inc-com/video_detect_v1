@@ -130,19 +130,19 @@ func detectObjectsUvicronSocket(data []byte, socketPath, aiURL string) ([]Detect
 
 // DetectServerStatusResp 识别服务资源情况
 type DetectServerStatusResp struct {
-	Success    bool    `json:"success"`
-	CPUPercent float64 `json:"cpu_percent"`
-	CPUCount   int     `json:"cpu_count"`
-	Memory     struct {
-		TotalMB int     `json:"total_mb"`
-		UsedMB  int     `json:"used_mb"`
-		Percent float64 `json:"percent"`
+	Success    bool     `json:"success"`
+	CPUPercent float64  `json:"cpu_percent"` // 当前CPU总使用率 百分比
+	CPUCount   int      `json:"cpu_count"`   // CPU核心数
+	Memory     struct { // 内存
+		TotalMB int     `json:"total_mb"` // 总内存 MB
+		UsedMB  int     `json:"used_mb"`  // 使用内存 MB
+		Percent float64 `json:"percent"`  // 百分比
 	} `json:"memory"`
-	HasGPU bool `json:"has_gpu"`
+	HasGPU bool `json:"has_gpu"` // 是否有GPU
 	GPU    struct {
-		GPUUtilizationPercent int `json:"gpu_utilization_percent"`
-		GPUMemoryUsedMB       int `json:"gpu_memory_used_mb"`
-		GPUMemoryTotalMB      int `json:"gpu_memory_total_mb"`
+		GPUUtilizationPercent int `json:"gpu_utilization_percent"` // GPU利用率
+		GPUMemoryUsedMB       int `json:"gpu_memory_used_mb"`      // GPU 使用内存MB
+		GPUMemoryTotalMB      int `json:"gpu_memory_total_mb"`     // GPU 总内存MB
 	} `json:"gpu"`
 }
 
@@ -182,6 +182,47 @@ func CheckDetectServiceResources(statusURL string) (bool, error) {
 		return false, nil
 	}
 	if status.Memory.Percent > 80.0 {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// CheckDetectHostServiceResources 检查识别服务状态
+func CheckDetectHostServiceResources(statusURL string, maxUsedPercent float64) (bool, error) {
+	if maxUsedPercent > 100.0 || maxUsedPercent <= 0 {
+		maxUsedPercent = 90.0
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(statusURL)
+	if err != nil {
+		return false, fmt.Errorf("无法访问 识别服务器状态: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var status DetectServerStatusResp
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return false, fmt.Errorf("状态解析失败: %w", err)
+	}
+
+	if !status.Success {
+		return false, fmt.Errorf("识别服务器返回失败状态")
+	}
+
+	fmt.Printf("识别服务器 状态: CPU %.1f%%, 核心 %d, 内存 %.1f%%, GPU: %v\n",
+		status.CPUPercent, status.CPUCount, status.Memory.Percent, status.HasGPU)
+
+	// 有 GPU，直接通过
+	if status.HasGPU {
+		fmt.Printf("GPU 使用率: %d%%, 显存: %d/%d MB\n",
+			status.GPU.GPUUtilizationPercent, status.GPU.GPUMemoryUsedMB, status.GPU.GPUMemoryTotalMB)
+		return true, nil
+	}
+
+	// CPU-only 判断逻辑
+
+	if status.CPUPercent >= maxUsedPercent || status.Memory.Percent >= maxUsedPercent {
 		return false, nil
 	}
 

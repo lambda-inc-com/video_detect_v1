@@ -10,6 +10,7 @@ socket-path = "/app/uvicorn.sock"
 
 # ✅ 改成容器名访问
 detect-ai-url = "http://ai-service:5000/detect"
+detect-host-status-url = "http://ai-service:5000/host/status"
 
 healthy-heartbeat = 60
 close-chan-cap = 128

@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"go_client/config"
@@ -91,6 +92,25 @@ func (d DetectHTTPServiceV1) DetectTest(c *gin.Context) error {
 		return nil
 	}
 	defer openedFile.Close()
+
+	var req struct {
+		MaxResourcesUsed float64 `form:"maxResourcesUsed" validate:"gte=0,lte=100"`
+	}
+
+	err = BindQuery(&req, c.Request)
+	if err != nil {
+		return err
+	}
+
+	// 检查识别系统资源
+	enough, err := CheckDetectHostServiceResources(d.cfg.Engine.DetectHostStatusURL, req.MaxResourcesUsed)
+	if err != nil {
+		return status.Wrapper(http.StatusInternalServerError, err)
+	}
+
+	if !enough {
+		return status.Wrapper(http.StatusInternalServerError, errors.New(fmt.Sprintf("识别服务资源不足，当前系统资源使用率大于 %.2f%%", req.MaxResourcesUsed)))
+	}
 
 	imgBytes, err := io.ReadAll(openedFile)
 	if err != nil {
@@ -222,6 +242,16 @@ func (d DetectHTTPServiceV1) StartDetect(c *gin.Context) error {
 	var req StartDetectReq
 	if err := Bind(&req, c.Request.Body); err != nil {
 		return err
+	}
+
+	// 检查识别系统资源
+	enough, err := CheckDetectHostServiceResources(d.cfg.Engine.DetectHostStatusURL, req.MaxResourcesUsed)
+	if err != nil {
+		return status.Wrapper(http.StatusInternalServerError, err)
+	}
+
+	if !enough {
+		return status.Wrapper(http.StatusInternalServerError, errors.New(fmt.Sprintf("识别服务资源不足，当前系统资源使用率大于 %.2f%%", req.MaxResourcesUsed)))
 	}
 
 	// 创建会话会先判断是否存在，若不存在则创建

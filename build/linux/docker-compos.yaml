@@ -24,6 +24,11 @@ services:
       - "5000:5000" # 用于测试用 curl，如果仅容器内调用可去掉
     networks:
       - video_net
+    privileged: true
+    pid: "host"
+    volumes:
+      - /proc:/host_proc:ro
+      - /sys:/host_sys:ro
 
   rtmp-server:
     image: build-rtmp-server:latest
