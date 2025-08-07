@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"image"
 	"image/color"
 	"io"
@@ -17,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/patrickmn/go-cache"
 	"go.uber.org/zap"
@@ -235,8 +236,8 @@ func (s *Session) Reset() {
 	s.ClearPusher()
 
 	//if s.recordFFmpegCmd != nil && s.recordFFmpegCmd.Process != nil {
-	//	_ = s.recordFFmpegCmd.Process.Kill()
-	//	_ = s.recordFFmpegCmd.Wait()
+	// _ = s.recordFFmpegCmd.Process.Kill()
+	// _ = s.recordFFmpegCmd.Wait()
 	//}
 	//s.recordFFmpegCmd = nil
 	s.ClearRecorder()
@@ -368,7 +369,7 @@ func (s *Session) Run(aiDetectAIURL string, uvicornSocket bool, socketPath strin
 		s.detectStatus.Store(false)
 		s.recordStatus.Store(false)
 		s.SendIDToCloseCh()
-		s.Reset()
+		//s.Reset()
 		s.logger.Info("📴 Stream session stopped")
 	}()
 
